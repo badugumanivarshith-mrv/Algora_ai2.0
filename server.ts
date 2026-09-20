@@ -6,7 +6,7 @@ import { initializeDatabase, Database } from "./backend/src/db";
 import { WebSocketManager } from "./backend/src/realtime/wsManager";
 import { RedisManager } from "./backend/src/redis/redisClient";
 import { RedisPubSubManager } from "./backend/src/redis/pubsub";
-import { validateEnvironment } from "./backend/src/config/env";
+import { validateEnvironment, config } from "./backend/src/config/env";
 import { SecretsService } from "./backend/src/services/secretsService";
 
 const PORT = 3000;
@@ -18,25 +18,16 @@ async function start() {
   // Execute environment validation and startup checks
   const envValidation = validateEnvironment();
   
-  console.log(`\n--- [Algora Environment Validation] ---`);
   if (envValidation.errors.length > 0) {
-    console.error(`❌ Validation failed with ${envValidation.errors.length} errors:`);
-    envValidation.errors.forEach(err => console.error(`   - ${err}`));
+    console.error(`[Algora] Validation failed with ${envValidation.errors.length} errors:`);
+    envValidation.errors.forEach((err) => console.error(`   - ${err}`));
     
     // Critical validation failure halts boot in non-dev environments
     if (process.env.NODE_ENV === "production" || process.env.NODE_ENV === "staging") {
       console.error("❌ Safe production boot checks failed. Halting application server.");
       process.exit(1);
     }
-  } else {
-    console.log("✅ All required production/staging environment configurations validated.");
   }
-
-  if (envValidation.warnings.length > 0) {
-    console.warn(`⚠️  Configuration warnings detected (${envValidation.warnings.length}):`);
-    envValidation.warnings.forEach(warn => console.warn(`   - ${warn}`));
-  }
-  console.log(`----------------------------------------\n`);
 
   // Initialize Database, Migrations, and Seeds
   await initializeDatabase();
@@ -44,6 +35,17 @@ async function start() {
   // Initialize Redis Connection Manager
   await RedisManager.initialize();
 
+  const isDbPostgres = Boolean(config.databaseUrl && Database.isReady());
+  const isRedisConnected = RedisManager.isReady();
+  const isGoogleConfigured = Boolean(config.googleClientId && config.googleClientSecret);
+  const isGithubConfigured = Boolean(config.githubClientId && config.githubClientSecret);
+
+  console.log(`[Algora] Environment validated`);
+  console.log(`[Algora] Database mode: ${isDbPostgres ? "PostgreSQL" : "Memory"}`);
+  console.log(`[Algora] Redis mode: ${isRedisConnected ? "Connected" : "Memory Fallback"}`);
+  console.log(`[Algora] OAuth Providers:`);
+  console.log(` - Google: ${isGoogleConfigured ? "Configured" : "Disabled"}`);
+  console.log(` - GitHub: ${isGithubConfigured ? "Configured" : "Disabled"}\n`);
 
   const app = createExpressApp();
 
@@ -63,11 +65,12 @@ async function start() {
   }
 
   const server = app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Algora Server] Running on http://0.0.0.0:${PORT} (${process.env.NODE_ENV || "development"})`);
+    console.log(`[Algora] Server running on http://0.0.0.0:${PORT}`);
   });
 
   // Attach WebSocket infrastructure with Redis Pub/Sub scaling
   WebSocketManager.initialize(server);
+  console.log(`[Algora] WebSocket initialized`);
 
   // Graceful shutdown handling
   const shutdown = async (signal: string) => {

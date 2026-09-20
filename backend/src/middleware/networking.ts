@@ -20,7 +20,6 @@ export function enforceHttpsAndSecureHeaders(req: Request, res: Response, next: 
     // 2. Add extra HTTP secure transport and reverse-proxy headers
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
     res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("X-Frame-Options", "SAMEORIGIN"); // Match iframe/oauth flow requirements
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
   }

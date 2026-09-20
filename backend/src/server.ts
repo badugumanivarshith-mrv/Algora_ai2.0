@@ -39,6 +39,9 @@ export function createExpressApp() {
     helmet({
       contentSecurityPolicy: false, // Allows Vite development & inline styles/fonts cleanly
       crossOriginEmbedderPolicy: false,
+      crossOriginOpenerPolicy: false,
+      crossOriginResourcePolicy: false,
+      frameguard: false, // Allow iframe embedding for AI Studio preview
     })
   );
 

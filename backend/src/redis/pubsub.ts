@@ -36,6 +36,11 @@ export class RedisPubSubManager {
     if (this.isSubscribed) return;
     this.isSubscribed = true;
 
+    if (!RedisManager.isReady()) {
+      logger.debug(`[RedisPubSub] Running in single-instance local dispatch mode.`);
+      return;
+    }
+
     try {
       const sub = RedisManager.getSubscriber();
 
@@ -57,20 +62,19 @@ export class RedisPubSubManager {
         this.dispatchMessage(channel, messageStr);
       });
 
-      sub.on("pmessage", (pattern: string, channel: string, messageStr: string) => {
+      sub.on("pmessage", (_pattern: string, channel: string, messageStr: string) => {
         this.dispatchMessage(channel, messageStr);
       });
 
       logger.info(`[RedisPubSub] Instance ${this.instanceId} subscribed to cluster channels.`);
     } catch (err: any) {
-      logger.warn(`[RedisPubSub] PubSub subscription initialization notice: ${err.message}`);
+      logger.debug(`[RedisPubSub] PubSub subscription initialization fallback: ${err.message}`);
     }
   }
 
   private static dispatchMessage(channel: string, raw: string): void {
     try {
       const parsed: PubSubMessage = JSON.parse(raw);
-      // Discard messages originating from the same node if handled locally, unless marked for all
       for (const handler of this.handlers) {
         handler(parsed);
       }
@@ -88,7 +92,7 @@ export class RedisPubSubManager {
   }
 
   /**
-   * Publish a message to all instances in cluster
+   * Publish a message to all instances in cluster (or local in single-node mode)
    */
   public static async publishBroadcast(eventType: string, data: any): Promise<void> {
     const message: PubSubMessage = {
@@ -108,10 +112,13 @@ export class RedisPubSubManager {
         logger.debug(`[RedisPubSub] publishBroadcast fallback: ${err.message}`);
       }
     }
+
+    // Local in-process broadcast fallback
+    this.dispatchMessage(this.CHANNELS.BROADCAST, JSON.stringify(message));
   }
 
   /**
-   * Publish a message to a specific room across instances
+   * Publish a message to a specific room across instances (or local fallback)
    */
   public static async publishToRoom(room: string, eventType: string, data: any): Promise<void> {
     const channel = `${this.CHANNELS.ROOM_PREFIX}${room}`;
@@ -133,10 +140,13 @@ export class RedisPubSubManager {
         logger.debug(`[RedisPubSub] publishToRoom fallback: ${err.message}`);
       }
     }
+
+    // Local in-process room dispatch fallback
+    this.dispatchMessage(channel, JSON.stringify(message));
   }
 
   /**
-   * Publish a direct message to a user across instances
+   * Publish a direct message to a user across instances (or local fallback)
    */
   public static async publishToUser(userId: string, eventType: string, data: any): Promise<void> {
     const channel = `${this.CHANNELS.USER_PREFIX}${userId}`;
@@ -158,6 +168,9 @@ export class RedisPubSubManager {
         logger.debug(`[RedisPubSub] publishToUser fallback: ${err.message}`);
       }
     }
+
+    // Local in-process user dispatch fallback
+    this.dispatchMessage(channel, JSON.stringify(message));
   }
 
   // --- Cluster Presence Synchronization ---

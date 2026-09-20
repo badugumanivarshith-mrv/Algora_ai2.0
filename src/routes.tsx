@@ -25,10 +25,6 @@ import { AIAssignmentGenerator } from "./pages/ai/AIAssignmentGenerator";
 import { AIInterviewGenerator } from "./pages/ai/AIInterviewGenerator";
 import { AIContestGenerator } from "./pages/ai/AIContestGenerator";
 import { ThemeProvider } from "./components/ThemeContext";
-import FeaturesPage from "./pages/public/FeaturesPage";
-import LearningPathsPage from "./pages/public/LearningPathsPage";
-import ConceptsPage from "./pages/public/ConceptsPage";
-import BlogPage from "./pages/public/BlogPage";
 
 // Lazy-loaded heavy hubs for bundle size optimization & performance
 const AIOSHub = lazy(() => import("./pages/AIOSHub"));
@@ -83,58 +79,10 @@ function LandingWrapper() {
   );
 }
 
-function FeaturesWrapper() {
-  return (
-    <ThemeProvider>
-      <FeaturesPage />
-    </ThemeProvider>
-  );
-}
-
-function LearningPathsWrapper() {
-  return (
-    <ThemeProvider>
-      <LearningPathsPage />
-    </ThemeProvider>
-  );
-}
-
-function ConceptsWrapper() {
-  return (
-    <ThemeProvider>
-      <ConceptsPage />
-    </ThemeProvider>
-  );
-}
-
-function BlogWrapper() {
-  return (
-    <ThemeProvider>
-      <BlogPage />
-    </ThemeProvider>
-  );
-}
-
 export const router = createBrowserRouter([
   {
     path: "/",
     Component: LandingWrapper,
-  },
-  {
-    path: "/features",
-    Component: FeaturesWrapper,
-  },
-  {
-    path: "/learning-paths",
-    Component: LearningPathsWrapper,
-  },
-  {
-    path: "/concepts",
-    Component: ConceptsWrapper,
-  },
-  {
-    path: "/blog",
-    Component: BlogWrapper,
   },
   {
     path: "/app",
@@ -368,8 +316,17 @@ export const router = createBrowserRouter([
     children: [{ index: true, Component: AIInterviewGenerator }],
   },
   {
+    path: "/company-prep",
+    Component: AppShell,
+    children: [{ index: true, Component: CompanyPrep }],
+  },
+  {
     path: "/ai-generator/contest",
     Component: AppShell,
     children: [{ index: true, Component: AIContestGenerator }],
+  },
+  {
+    path: "*",
+    Component: () => <Navigate to="/" replace />,
   },
 ]);

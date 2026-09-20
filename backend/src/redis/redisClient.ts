@@ -21,31 +21,28 @@ export class RedisManager {
   private static subscriberInstance: Redis | null = null;
   private static publisherInstance: Redis | null = null;
   private static isConnected: boolean = false;
+  private static isAvailable: boolean = false;
   private static isInitialized: boolean = false;
-  private static reconnectAttempts: number = 0;
-  private static readonly maxReconnectAttempts: number = 20;
+  private static hasLoggedStatus: boolean = false;
 
-  // In-memory key-value cache fallback if Redis is temporarily unreachable
+  // In-memory key-value cache fallback if Redis is unreachable
   private static memoryFallback: Map<string, { value: string; expiresAt?: number }> = new Map();
 
-  public static getOptions(): RedisOptions {
+  public static getOptions(disableRetry: boolean = false): RedisOptions {
     const baseOptions: RedisOptions = {
-      maxRetriesPerRequest: config.redisMaxRetriesPerRequest,
-      connectTimeout: config.redisConnectTimeout,
+      maxRetriesPerRequest: disableRetry ? 1 : config.redisMaxRetriesPerRequest,
+      connectTimeout: config.redisConnectTimeout || 1500,
       keyPrefix: config.redisKeyPrefix,
-      lazyConnect: false,
-      enableOfflineQueue: true,
-      retryStrategy(times) {
-        RedisManager.reconnectAttempts = times;
-        if (times > RedisManager.maxReconnectAttempts) {
-          logger.warn(`[RedisManager] Max reconnect attempts (${RedisManager.maxReconnectAttempts}) reached. Continuing with resilient fallback.`);
-          return null;
-        }
-        // Exponential backoff with jitter: min 100ms, max 3000ms
-        const delay = Math.min(times * 150 + Math.floor(Math.random() * 100), 3000);
-        logger.info(`[RedisManager] Reconnecting to Redis in ${delay}ms (attempt #${times})...`);
-        return delay;
-      },
+      lazyConnect: true,
+      enableOfflineQueue: false,
+      retryStrategy: disableRetry
+        ? () => null
+        : (times) => {
+            if (times > 3) {
+              return null; // Cap retries quickly to prevent log floods
+            }
+            return Math.min(times * 200, 1000);
+          },
     };
 
     if (config.redisUrl) {
@@ -64,58 +61,87 @@ export class RedisManager {
   }
 
   /**
-   * Initializes primary, publisher, and subscriber Redis connections
+   * Initializes primary, publisher, and subscriber Redis connections with graceful probe
    */
   public static async initialize(): Promise<void> {
     if (this.isInitialized) return;
     this.isInitialized = true;
 
+    // Fast-path disable check
+    if (process.env.REDIS_ENABLED === "false") {
+      this.isAvailable = false;
+      this.isConnected = false;
+      this.logStatusOnce(false);
+      return;
+    }
+
     try {
-      const options = this.getOptions();
-      const createClient = (name: string): Redis => {
-        const client = config.redisUrl
-          ? new Redis(config.redisUrl, options)
-          : new Redis(options);
+      // Single connection probe with fast timeout
+      const probeOptions = this.getOptions(true);
+      const probeClient = config.redisUrl
+        ? new Redis(config.redisUrl, probeOptions)
+        : new Redis(probeOptions);
 
-        client.on("connect", () => {
-          logger.info(`[RedisManager] ${name} connecting...`);
-        });
+      // Suppress noisy uncaught errors on the probe client
+      probeClient.on("error", () => {});
 
-        client.on("ready", () => {
-          this.isConnected = true;
-          this.reconnectAttempts = 0;
-          logger.info(`[RedisManager] ${name} connected and ready.`);
-        });
+      await Promise.race([
+        probeClient.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Redis connection probe timeout")), 1000)),
+      ]);
 
-        client.on("error", (err) => {
-          logger.warn(`[RedisManager] ${name} connection notice: ${err.message}`);
-        });
+      await probeClient.ping();
 
-        client.on("close", () => {
-          if (name === "Primary") this.isConnected = false;
-          logger.warn(`[RedisManager] ${name} connection closed.`);
-        });
+      // Probe succeeded: Redis is reachable
+      this.isAvailable = true;
+      this.isConnected = true;
+      this.instance = probeClient;
 
-        client.on("reconnecting", () => {
-          logger.info(`[RedisManager] ${name} reconnecting...`);
-        });
+      // Attach event listeners for production resilience
+      this.instance.on("error", (err) => {
+        logger.debug(`[RedisManager] Primary connection error: ${err.message}`);
+      });
+      this.instance.on("close", () => {
+        this.isConnected = false;
+      });
+      this.instance.on("ready", () => {
+        this.isConnected = true;
+      });
 
-        return client;
+      // Initialize subscriber and publisher clients
+      const standardOptions = this.getOptions(false);
+      const createSubPubClient = (): Redis => {
+        const c = config.redisUrl
+          ? new Redis(config.redisUrl, standardOptions)
+          : new Redis(standardOptions);
+        c.on("error", () => {});
+        c.connect().catch(() => {});
+        return c;
       };
 
-      this.instance = createClient("Primary");
-      this.publisherInstance = createClient("Publisher");
-      this.subscriberInstance = createClient("Subscriber");
+      this.publisherInstance = createSubPubClient();
+      this.subscriberInstance = createSubPubClient();
 
-      // Verify immediate ping with 1.5s timeout
-      await Promise.race([
-        this.instance.ping(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Redis ping timeout")), 1500)),
-      ]).catch((err) => {
-        logger.warn(`[RedisManager] Initial ping test notice: ${err.message}. Ready fallback active.`);
-      });
-    } catch (err: any) {
-      logger.warn(`[RedisManager] Initialization fallback active: ${err.message}`);
+      this.logStatusOnce(true);
+    } catch {
+      // Redis is not reachable; cleanly revert to memory fallback
+      this.isAvailable = false;
+      this.isConnected = false;
+      this.instance = null;
+      this.publisherInstance = null;
+      this.subscriberInstance = null;
+      this.logStatusOnce(false);
+    }
+  }
+
+  private static logStatusOnce(isOnline: boolean): void {
+    if (this.hasLoggedStatus) return;
+    this.hasLoggedStatus = true;
+    if (isOnline) {
+      logger.info(`[Redis] Connected and ready (Host: ${config.redisHost || "URL"}).`);
+    } else {
+      logger.info(`[Redis] Redis unavailable.`);
+      logger.info(`[Redis] Running in memory fallback mode.`);
     }
   }
 
@@ -123,7 +149,7 @@ export class RedisManager {
    * Primary Redis client instance
    */
   public static getClient(): Redis {
-    if (!this.instance) {
+    if (!this.instance && this.isAvailable) {
       this.initialize();
     }
     return this.instance!;
@@ -133,7 +159,7 @@ export class RedisManager {
    * Dedicated Publisher client instance
    */
   public static getPublisher(): Redis {
-    if (!this.publisherInstance) {
+    if (!this.publisherInstance && this.isAvailable) {
       this.initialize();
     }
     return this.publisherInstance!;
@@ -143,7 +169,7 @@ export class RedisManager {
    * Dedicated Subscriber client instance
    */
   public static getSubscriber(): Redis {
-    if (!this.subscriberInstance) {
+    if (!this.subscriberInstance && this.isAvailable) {
       this.initialize();
     }
     return this.subscriberInstance!;
@@ -153,8 +179,10 @@ export class RedisManager {
    * Duplicate client for isolated tasks/queues
    */
   public static createDuplicateClient(name: string): Redis {
-    const options = this.getOptions();
-    return config.redisUrl ? new Redis(config.redisUrl, options) : new Redis(options);
+    const options = this.getOptions(false);
+    const client = config.redisUrl ? new Redis(config.redisUrl, options) : new Redis(options);
+    client.on("error", () => {});
+    return client;
   }
 
   /**
