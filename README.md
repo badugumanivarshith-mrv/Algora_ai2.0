@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Algora AI — Intelligent Computer Science, Adaptive Learning & Career Ecosystem
 
 [![Vite v6](https://img.shields.io/badge/Vite-v6.2-blueviolet.svg?style=flat-square&logo=vite)](https://vite.dev/)
@@ -158,3 +159,16 @@ gcloud run deploy algora-service --image gcr.io/algora-platform/applet:v5.1.0 --
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+=======
+<div align="center">
+
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+
+  <h1>Built with AI Studio</h2>
+
+  <p>The fastest path from prompt to production with Gemini.</p>
+
+  <a href="https://aistudio.google.com/apps">Start building</a>
+
+</div>
+>>>>>>> 9182af6022704266f39950af35d08f6fd7197f4e
